@@ -439,7 +439,28 @@
         </div>
         <div class="chevron">›</div>
       </div>
+
+      <div class="tile" onclick="go('screen-settings')">
+        <div class="tile-icon">⚙️</div>
+        <div class="tile-text">
+          <div class="t-title">Настройки подключения</div>
+          <div class="t-sub" id="apiUrlSub">Адрес сервера не задан</div>
+        </div>
+        <div class="chevron">›</div>
+      </div>
     </div>
+  </div>
+
+  <!-- SCREEN SETTINGS -->
+  <div class="screen" id="screen-settings">
+    <div class="topbar">
+      <button class="back-btn" onclick="go('screen-home')">‹</button>
+      <h2>Настройки подключения</h2>
+    </div>
+    <div class="field-label">Адрес сервера бота (ngrok)</div>
+    <input class="field" id="apiUrlInput" placeholder="https://xxxx.ngrok-free.app" autocomplete="off">
+    <div class="hint">Скопируй сюда https-ссылку, которую показывает ngrok в Termux. Она меняется при каждом перезапуске ngrok.</div>
+    <button class="btn" style="margin-top:18px" onclick="saveApiUrl()">Сохранить</button>
   </div>
 
   <!-- SCREEN 2: INFO -->
@@ -497,21 +518,16 @@
       <h2>Точка поддержки</h2>
     </div>
 
-    <div id="setup-step-username">
-      <div class="field-label">Твой юзернейм в Telegram</div>
-      <input class="field" id="usernameInput" placeholder="например, ivan_support" autocomplete="off">
-      <div class="hint" id="usernameHint">Нужен, чтобы люди понимали, кто им отвечает</div>
-      <button class="btn" style="margin-top:18px" onclick="confirmUsername()">Подтвердить</button>
-    </div>
-
     <div id="setup-step-linkname" style="display:none">
-      <div class="hint ok">✓ Юзернейм подтверждён: <span id="confirmedUsername"></span></div>
+      <div class="hint">Ты: <span id="confirmedUsername"></span></div>
       <div class="field-label">Название ссылки</div>
       <input class="field" id="linkNameInput" placeholder="например, MyShopSupport" autocomplete="off">
       <div class="hint">Только это будет видно в ссылке. Должно быть уникальным.</div>
-      <div class="link-preview" id="linkPreview">t.me/astronella_bot?start=support_...</div>
+      <div class="link-preview" id="linkPreview">t.me/astronella_space_bot?start=support_...</div>
       <button class="btn" style="margin-top:18px" onclick="confirmLinkName()">Создать ссылку</button>
     </div>
+
+    <div id="setup-loading" class="hint">Загрузка...</div>
 
     <div id="setup-step-done" style="display:none">
       <div class="card">
@@ -677,151 +693,208 @@
     setTimeout(() => el.classList.remove('show'), 1800);
   }
 
-  // ---------- mock state (replace with real bot API calls) ----------
-  const state = {
-    username: null,
-    linkName: null,
-    staff: [],
-    tickets: [
-      { id: 1, name: 'Оля', username: '@olya_k', taken: null, unread: true,
-        messages: [{ from: 'in', text: 'Привет! Подскажите, когда доставка?' }] },
-      { id: 2, name: 'Максим', username: '@maxx', taken: 'ты', unread: false,
-        messages: [
-          { from: 'in', text: 'Можно вернуть товар?' },
-          { from: 'out', text: 'Да, конечно, напишите номер заказа' }
-        ] }
-    ]
-  };
-  let currentTicketId = null;
+  // ---------- API ----------
+  const tg = (window.Telegram && window.Telegram.WebApp) || null;
+  const initData = tg ? tg.initData : '';
+  const tgUser = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
 
-  // ---------- setup flow ----------
-  function confirmUsername() {
-    const v = document.getElementById('usernameInput').value.trim().replace(/^@/, '');
-    if (!v) { toast('Введите юзернейм'); return; }
-    state.username = v;
-    document.getElementById('confirmedUsername').textContent = '@' + v;
-    document.getElementById('setup-step-username').style.display = 'none';
-    document.getElementById('setup-step-linkname').style.display = 'block';
+  function getApiUrl() {
+    return localStorage.getItem('astro_api_url') || '';
   }
 
+  function saveApiUrl() {
+    const v = document.getElementById('apiUrlInput').value.trim().replace(/\/$/, '');
+    if (!v) { toast('Введите адрес'); return; }
+    localStorage.setItem('astro_api_url', v);
+    document.getElementById('apiUrlSub').textContent = v;
+    toast('Сохранено ✨');
+    go('screen-home');
+    loadState();
+  }
+
+  async function api(path, options = {}) {
+    const base = getApiUrl();
+    if (!base) {
+      toast('Сначала задай адрес сервера в настройках');
+      go('screen-settings');
+      throw new Error('no api url');
+    }
+    const res = await fetch(base + path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Init-Data': initData,
+        ...(options.headers || {})
+      }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      toast(data.error || 'Ошибка запроса');
+      throw new Error(data.error || 'request failed');
+    }
+    return data;
+  }
+
+  if (tgUser) {
+    const el = document.getElementById('confirmedUsername');
+    if (el) el.textContent = tgUser.username ? '@' + tgUser.username : tgUser.first_name || '';
+  }
+
+  let appState = { has_point: false, link_name: null, bot_username: 'astronella_space_bot', staff: [], open_tickets: 0 };
+  let currentTicketId = null;
+
+  async function loadState() {
+    const apiUrl = getApiUrl();
+    document.getElementById('apiUrlSub').textContent = apiUrl || 'Адрес сервера не задан';
+    document.getElementById('apiUrlInput').value = apiUrl;
+    if (!apiUrl) return;
+
+    try {
+      appState = await api('/api/state');
+    } catch (e) { return; }
+
+    if (appState.has_point) {
+      document.getElementById('setupTileTitle').textContent = 'Точка поддержки активна';
+      document.getElementById('setupTileSub').textContent = `t.me/${appState.bot_username}?start=support_${appState.link_name}`;
+      document.getElementById('setup-step-linkname').style.display = 'none';
+      document.getElementById('setup-step-done').style.display = 'block';
+      document.getElementById('finalLink').textContent = `t.me/${appState.bot_username}?start=support_${appState.link_name}`;
+      renderStaff();
+    } else {
+      document.getElementById('setupTileTitle').textContent = 'Создать точку поддержки';
+      document.getElementById('setupTileSub').textContent = 'Ссылка ещё не создана';
+    }
+    document.getElementById('ticketsSub').textContent =
+      appState.open_tickets ? `Новых: ${appState.open_tickets}` : 'Пока пусто';
+  }
+
+  // ---------- setup flow ----------
   document.getElementById('linkNameInput')?.addEventListener('input', e => {
     const v = e.target.value.trim();
     document.getElementById('linkPreview').textContent =
-      't.me/astronella_bot?start=support_' + (v || '...');
+      `t.me/${appState.bot_username}?start=support_` + (v || '...');
   });
 
-  function confirmLinkName() {
+  async function confirmLinkName() {
     const v = document.getElementById('linkNameInput').value.trim();
     if (!v) { toast('Введите название ссылки'); return; }
-    state.linkName = v;
-    document.getElementById('setup-step-linkname').style.display = 'none';
-    document.getElementById('setup-step-done').style.display = 'block';
-    document.getElementById('finalLink').textContent =
-      't.me/astronella_bot?start=support_' + v;
-    document.getElementById('setupTileTitle').textContent = 'Точка поддержки активна';
-    document.getElementById('setupTileSub').textContent = 't.me/astronella_bot?start=support_' + v;
-    toast('Ссылка создана ✨');
+    try {
+      const data = await api('/api/create', { method: 'POST', body: JSON.stringify({ link_name: v }) });
+      appState.has_point = true;
+      appState.link_name = data.link_name;
+      document.getElementById('setup-step-linkname').style.display = 'none';
+      document.getElementById('setup-step-done').style.display = 'block';
+      document.getElementById('finalLink').textContent = data.link;
+      document.getElementById('setupTileTitle').textContent = 'Точка поддержки активна';
+      document.getElementById('setupTileSub').textContent = data.link;
+      toast('Ссылка создана ✨');
+    } catch (e) {}
   }
 
   document.getElementById('renameInput')?.addEventListener('input', e => {
     const v = e.target.value.trim();
     document.getElementById('renamePreview').textContent =
-      't.me/astronella_bot?start=support_' + (v || '...');
+      `t.me/${appState.bot_username}?start=support_` + (v || '...');
   });
 
-  function confirmRename() {
+  async function confirmRename() {
     const v = document.getElementById('renameInput').value.trim();
     if (!v) { toast('Введите новое название'); return; }
-    state.linkName = v;
-    document.getElementById('finalLink').textContent = 't.me/astronella_bot?start=support_' + v;
-    document.getElementById('setupTileSub').textContent = 't.me/astronella_bot?start=support_' + v;
-    toast('Ссылка обновлена');
-    go('screen-setup');
+    try {
+      const data = await api('/api/rename', { method: 'POST', body: JSON.stringify({ link_name: v }) });
+      appState.link_name = data.link_name;
+      document.getElementById('finalLink').textContent = data.link;
+      document.getElementById('setupTileSub').textContent = data.link;
+      toast('Ссылка обновлена');
+      go('screen-setup');
+    } catch (e) {}
   }
 
-  function addStaff() {
+  async function addStaff() {
     const v = document.getElementById('staffInput').value.trim().replace(/^@/, '');
     if (!v) { toast('Введите юзернейм'); return; }
-    state.staff.push(v);
-    document.getElementById('staffInput').value = '';
-    renderStaff();
-    toast('Сотрудник добавлен');
+    try {
+      await api('/api/staff/add', { method: 'POST', body: JSON.stringify({ username: v }) });
+      appState.staff.push(v);
+      document.getElementById('staffInput').value = '';
+      renderStaff();
+      toast('Сотрудник добавлен');
+    } catch (e) {}
   }
 
   function renderStaff() {
     const list = document.getElementById('staffList');
-    if (!state.staff.length) {
+    if (!appState.staff || !appState.staff.length) {
       list.innerHTML = '<div class="hint">Пока никого нет</div>';
     } else {
-      list.innerHTML = state.staff.map(s => `
+      list.innerHTML = appState.staff.map(s => `
         <div class="tile">
           <div class="tile-icon">🧑</div>
           <div class="tile-text"><div class="t-title">@${s}</div></div>
         </div>`).join('');
     }
     document.getElementById('staffCountSub').textContent =
-      state.staff.length ? `Помощников: ${state.staff.length}` : 'Помощников пока нет';
+      appState.staff && appState.staff.length ? `Помощников: ${appState.staff.length}` : 'Помощников пока нет';
   }
 
   // ---------- tickets ----------
-  function renderTickets() {
+  async function renderTickets() {
     const wrap = document.getElementById('ticketsList');
-    if (!state.tickets.length) {
+    wrap.innerHTML = '<div class="hint">Загрузка...</div>';
+    let data;
+    try {
+      data = await api('/api/tickets');
+    } catch (e) { wrap.innerHTML = ''; return; }
+
+    const tickets = data.tickets || [];
+    if (!tickets.length) {
       wrap.innerHTML = '<div class="hint">Пока нет обращений</div>';
-      document.getElementById('ticketsSub').textContent = 'Пока пусто';
       return;
     }
-    const unreadCount = state.tickets.filter(t => t.unread).length;
-    document.getElementById('ticketsSub').textContent =
-      unreadCount ? `Новых: ${unreadCount}` : `Всего: ${state.tickets.length}`;
-
-    wrap.innerHTML = state.tickets.map(t => {
-      const last = t.messages[t.messages.length - 1];
-      return `
-        <div class="ticket" onclick="openTicket(${t.id})">
-          <div class="ticket-top">
-            <div class="ticket-name">${t.name} <span style="color:var(--text-dim);font-weight:400">${t.username}</span>
-              ${t.unread ? '<span class="badge-new">новое</span>' : ''}
-              ${t.taken ? `<span class="badge-taken">взял: ${t.taken}</span>` : ''}
-            </div>
-            <div class="ticket-time"></div>
+    wrap.innerHTML = tickets.map(t => `
+      <div class="ticket" onclick="openTicket(${t.id})">
+        <div class="ticket-top">
+          <div class="ticket-name">${t.name} <span style="color:var(--text-dim);font-weight:400">${t.username ? '@' + t.username : ''}</span>
+            ${!t.taken_by_name ? '<span class="badge-new">новое</span>' : `<span class="badge-taken">взял: ${t.taken_by_name}</span>`}
           </div>
-          <div class="ticket-msg">${last.text}</div>
-        </div>`;
-    }).join('');
+        </div>
+      </div>`).join('');
   }
 
-  function openTicket(id) {
+  async function openTicket(id) {
     currentTicketId = id;
-    const t = state.tickets.find(x => x.id === id);
-    t.unread = false;
-    t.taken = t.taken || 'ты';
-    document.getElementById('chatWithName').textContent = `${t.name} ${t.username}`;
-    renderChat();
     go('screen-chat');
+    document.getElementById('chatMessages').innerHTML = '<div class="hint">Загрузка...</div>';
+    try {
+      await api(`/api/tickets/${id}/take`, { method: 'POST', body: '{}' });
+      const data = await api(`/api/tickets/${id}`);
+      document.getElementById('chatWithName').textContent =
+        `${data.ticket.name}${data.ticket.username ? ' @' + data.ticket.username : ''}`;
+      renderChat(data.messages);
+    } catch (e) {}
   }
 
-  function renderChat() {
-    const t = state.tickets.find(x => x.id === currentTicketId);
+  function renderChat(messages) {
     const wrap = document.getElementById('chatMessages');
-    wrap.innerHTML = t.messages.map(m =>
-      `<div class="msg ${m.from}">${m.text}</div>`
+    wrap.innerHTML = messages.map(m =>
+      `<div class="msg ${m.sender === 'requester' ? 'in' : 'out'}">${m.text}</div>`
     ).join('');
     wrap.scrollTop = wrap.scrollHeight;
   }
 
-  function sendReply() {
+  async function sendReply() {
     const input = document.getElementById('chatInput');
     const v = input.value.trim();
-    if (!v) return;
-    const t = state.tickets.find(x => x.id === currentTicketId);
-    t.messages.push({ from: 'out', text: v });
-    input.value = '';
-    renderChat();
-    // TODO: отправить на backend бота, чтобы он переслал сообщение пользователю
+    if (!v || currentTicketId == null) return;
+    try {
+      await api(`/api/tickets/${currentTicketId}/reply`, { method: 'POST', body: JSON.stringify({ text: v }) });
+      input.value = '';
+      const data = await api(`/api/tickets/${currentTicketId}`);
+      renderChat(data.messages);
+    } catch (e) {}
   }
 
-  renderStaff();
+  loadState();
 </script>
 
 </body>
