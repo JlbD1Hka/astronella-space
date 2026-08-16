@@ -78,20 +78,25 @@
   }
 
   .screen {
-    display: none;
+    display: flex;
     flex-direction: column;
     flex: 1;
     padding: 28px 16px 100px;
     max-width: 480px;
     margin: 0 auto;
     width: 100%;
-    animation: fadeIn 0.25s ease;
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+    pointer-events: none;
+    transition: opacity 0.28s cubic-bezier(.22,.68,.36,1), transform 0.28s cubic-bezier(.22,.68,.36,1);
   }
-  .screen.active { display: flex; }
-
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
+  .screen.active {
+    position: relative;
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
   }
 
   .header {
@@ -157,8 +162,14 @@
     background: var(--accent);
     transition: transform 0.12s ease, box-shadow 0.25s ease;
     width: 100%;
+    animation: breatheGlow 3.2s ease-in-out infinite;
+  }
+  @keyframes breatheGlow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(108,123,255,0); }
+    50% { box-shadow: 0 0 18px 1px rgba(108,123,255,0.35); }
   }
   .btn:active {
+    animation-play-state: paused;
     transform: scale(0.96);
     box-shadow: 0 0 0 6px var(--accent-soft), 0 0 24px 4px rgba(108,123,255,0.5);
   }
@@ -208,7 +219,19 @@
     background: var(--bg-card-2);
     box-shadow: 0 0 20px 2px var(--accent-soft);
   }
-  .tile .tile-icon { font-size: 22px; }
+  .tile .tile-icon { font-size: 22px; display: inline-block; animation: iconFloat 3.4s ease-in-out infinite; }
+  .tile:nth-child(2) .tile-icon { animation-delay: 0.6s; }
+  .tile:nth-child(3) .tile-icon { animation-delay: 1.2s; }
+  .tile:nth-child(4) .tile-icon { animation-delay: 1.8s; }
+  @keyframes iconFloat {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-3px) rotate(-4deg); }
+  }
+  .tile:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px -6px rgba(108,123,255,0.35);
+    border-color: var(--accent);
+  }
   .tile .tile-text { flex: 1; }
   .tile .tile-text .t-title { font-size: 14.5px; font-weight: 600; }
   .tile .tile-text .t-sub { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; }
@@ -440,27 +463,7 @@
         <div class="chevron">›</div>
       </div>
 
-      <div class="tile" onclick="go('screen-settings')">
-        <div class="tile-icon">⚙️</div>
-        <div class="tile-text">
-          <div class="t-title">Настройки подключения</div>
-          <div class="t-sub" id="apiUrlSub">Адрес сервера не задан</div>
-        </div>
-        <div class="chevron">›</div>
-      </div>
     </div>
-  </div>
-
-  <!-- SCREEN SETTINGS -->
-  <div class="screen" id="screen-settings">
-    <div class="topbar">
-      <button class="back-btn" onclick="go('screen-home')">‹</button>
-      <h2>Настройки подключения</h2>
-    </div>
-    <div class="field-label">Адрес сервера бота</div>
-    <input class="field" id="apiUrlInput" placeholder="https://твой-адрес.com" autocomplete="off">
-    <div class="hint">Адрес, на котором сейчас работает бот.</div>
-    <button class="btn" style="margin-top:18px" onclick="saveApiUrl()">Сохранить</button>
   </div>
 
   <!-- SCREEN 2: INFO -->
@@ -681,8 +684,13 @@
 
   // ---------- navigation ----------
   function go(id) {
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
+    const current = document.querySelector('.screen.active');
+    const next = document.getElementById(id);
+    if (current === next) return;
+    if (current) current.classList.remove('active');
+    requestAnimationFrame(() => {
+      next.classList.add('active');
+    });
     if (id === 'screen-tickets') renderTickets();
   }
 
@@ -699,24 +707,13 @@
   const tgUser = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
 
   function getApiUrl() {
-    return localStorage.getItem('astro_api_url') || '';
-  }
-
-  function saveApiUrl() {
-    const v = document.getElementById('apiUrlInput').value.trim().replace(/\/$/, '');
-    if (!v) { toast('Введите адрес'); return; }
-    localStorage.setItem('astro_api_url', v);
-    document.getElementById('apiUrlSub').textContent = v;
-    toast('Сохранено ✨');
-    go('screen-home');
-    loadState();
+    return 'https://astronella.duckdns.org';
   }
 
   async function api(path, options = {}) {
     const base = getApiUrl();
     if (!base) {
-      toast('Сначала задай адрес сервера в настройках');
-      go('screen-settings');
+      toast('Ошибка подключения к серверу');
       throw new Error('no api url');
     }
     const res = await fetch(base + path, {
@@ -745,8 +742,6 @@
 
   async function loadState() {
     const apiUrl = getApiUrl();
-    document.getElementById('apiUrlSub').textContent = apiUrl || 'Адрес сервера не задан';
-    document.getElementById('apiUrlInput').value = apiUrl;
     if (!apiUrl) return;
 
     try {
