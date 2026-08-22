@@ -653,7 +653,7 @@
       <button class="btn" style="margin-top:18px" onclick="confirmLinkName()">Создать ссылку</button>
     </div>
 
-    <div id="setup-loading" class="hint">Загрузка...</div>
+    <div id="setup-loading" class="hint" style="display:none">Загрузка...</div>
 
     <div id="setup-step-done" style="display:none">
       <div class="card">
@@ -944,6 +944,8 @@
     } else {
       document.getElementById('setupTileTitle').textContent = 'Создать точку поддержки';
       document.getElementById('setupTileSub').textContent = 'Ссылка ещё не создана';
+      document.getElementById('setup-step-linkname').style.display = 'block';
+      document.getElementById('setup-step-done').style.display = 'none';
     }
     document.getElementById('ticketsSub').textContent =
       appState.open_tickets ? `Новых: ${appState.open_tickets}` : 'Пока пусто';
