@@ -1092,7 +1092,13 @@
   }
 
   const urlParams = new URLSearchParams(window.location.search);
-  const requesterPoint = urlParams.get('point');
+  let requesterPoint = urlParams.get('point');
+  if (!requesterPoint) {
+    const startParam = tg && tg.initDataUnsafe ? tg.initDataUnsafe.start_param : null;
+    if (startParam && startParam.startsWith('support_')) {
+      requesterPoint = startParam.slice('support_'.length);
+    }
+  }
 
   function renderRequesterMessages(messages) {
     const wrap = document.getElementById('reqMessages');
