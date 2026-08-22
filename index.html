@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Astronella Space — поддержка</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
@@ -517,8 +520,29 @@
     transition: transform 0.12s ease;
   }
   .photo-btn:active { transform: scale(0.94); }
-  .msg img { max-width: 100%; border-radius: 10px; display: block; }
+  .msg img { max-width: 100%; border-radius: 10px; display: block; cursor: pointer; }
   .msg video { max-width: 100%; border-radius: 10px; display: block; }
+  .lightbox {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.92);
+    z-index: 999;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .lightbox.active { display: flex; }
+  .lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; object-fit: contain; }
+  .file-msg {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    color: inherit;
+  }
+  .file-msg .file-icon { font-size: 20px; }
+  .file-msg .file-name { word-break: break-all; }
 
   .footer {
     position: fixed;
@@ -748,8 +772,8 @@
       <div class="chat-messages" id="chatMessages"></div>
       <div class="chat-input-bar">
         <input class="field" id="chatInput" placeholder="Ответить...">
-        <button class="photo-btn" onclick="document.getElementById('chatPhotoInput').click()">📷</button>
-        <input type="file" id="chatPhotoInput" accept="image/*,video/*" multiple style="display:none" onchange="sendReplyMedia(this)">
+        <button class="photo-btn" onclick="document.getElementById('chatPhotoInput').click()">📎</button>
+        <input type="file" id="chatPhotoInput" accept="*/*" multiple style="display:none" onchange="sendReplyMedia(this)">
         <button class="send-btn" onclick="sendReply()">➤</button>
       </div>
     </div>
@@ -764,8 +788,8 @@
       <div class="chat-messages" id="reqMessages"></div>
       <div class="chat-input-bar">
         <input class="field" id="reqInput" placeholder="Напиши сообщение...">
-        <button class="photo-btn" onclick="document.getElementById('reqPhotoInput').click()">📷</button>
-        <input type="file" id="reqPhotoInput" accept="image/*,video/*" multiple style="display:none" onchange="sendRequesterMedia(this)">
+        <button class="photo-btn" onclick="document.getElementById('reqPhotoInput').click()">📎</button>
+        <input type="file" id="reqPhotoInput" accept="*/*" multiple style="display:none" onchange="sendRequesterMedia(this)">
         <button class="send-btn" onclick="sendRequesterMessage()">➤</button>
       </div>
     </div>
@@ -774,6 +798,10 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <img id="lightboxImg" src="">
+</div>
 
 <script>
   // ---------- Telegram init ----------
@@ -1094,10 +1122,17 @@
     wrap.innerHTML = messages.map(m => {
       const side = m.sender === 'requester' ? 'in' : 'out';
       if (m.text.startsWith('PHOTO:')) {
-        return `<div class="msg ${side}"><img src="${m.text.slice(6)}" loading="lazy"></div>`;
+        const url = m.text.slice(6);
+        return `<div class="msg ${side}"><img src="${url}" loading="lazy" onclick="openLightbox('${url}')"></div>`;
       }
       if (m.text.startsWith('VIDEO:')) {
         return `<div class="msg ${side}"><video src="${m.text.slice(6)}" controls preload="metadata"></video></div>`;
+      }
+      if (m.text.startsWith('FILE:')) {
+        try {
+          const f = JSON.parse(m.text.slice(5));
+          return `<div class="msg ${side}"><a class="file-msg" href="${f.url}" download="${f.name}" target="_blank"><span class="file-icon">📄</span><span class="file-name">${f.name}</span></a></div>`;
+        } catch (e) {}
       }
       return `<div class="msg ${side}">${m.text}</div>`;
     }).join('');
@@ -1131,12 +1166,18 @@
     for (const file of files) {
       try {
         const base64 = await readFileAsBase64(file);
-        const isVideo = file.type.startsWith('video/');
-        const path = isVideo
-          ? `/api/tickets/${currentTicketId}/reply-video`
-          : `/api/tickets/${currentTicketId}/reply-photo`;
-        const bodyKey = isVideo ? 'video' : 'photo';
-        await api(path, { method: 'POST', body: JSON.stringify({ [bodyKey]: base64 }) });
+        let path, body;
+        if (file.type.startsWith('image/')) {
+          path = `/api/tickets/${currentTicketId}/reply-photo`;
+          body = { photo: base64 };
+        } else if (file.type.startsWith('video/')) {
+          path = `/api/tickets/${currentTicketId}/reply-video`;
+          body = { video: base64 };
+        } else {
+          path = `/api/tickets/${currentTicketId}/reply-file`;
+          body = { file: base64, filename: file.name };
+        }
+        await api(path, { method: 'POST', body: JSON.stringify(body) });
       } catch (e) {}
     }
     inputEl.value = '';
@@ -1158,14 +1199,30 @@
     wrap.innerHTML = messages.map(m => {
       const side = m.sender === 'requester' ? 'out' : 'in';
       if (m.text.startsWith('PHOTO:')) {
-        return `<div class="msg ${side}"><img src="${m.text.slice(6)}" loading="lazy"></div>`;
+        const url = m.text.slice(6);
+        return `<div class="msg ${side}"><img src="${url}" loading="lazy" onclick="openLightbox('${url}')"></div>`;
       }
       if (m.text.startsWith('VIDEO:')) {
         return `<div class="msg ${side}"><video src="${m.text.slice(6)}" controls preload="metadata"></video></div>`;
       }
+      if (m.text.startsWith('FILE:')) {
+        try {
+          const f = JSON.parse(m.text.slice(5));
+          return `<div class="msg ${side}"><a class="file-msg" href="${f.url}" download="${f.name}" target="_blank"><span class="file-icon">📄</span><span class="file-name">${f.name}</span></a></div>`;
+        } catch (e) {}
+      }
       return `<div class="msg ${side}">${m.text}</div>`;
     }).join('');
     wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  function openLightbox(url) {
+    document.getElementById('lightboxImg').src = url;
+    document.getElementById('lightbox').classList.add('active');
+  }
+
+  function closeLightbox() {
+    document.getElementById('lightbox').classList.remove('active');
   }
 
   async function loadRequesterThread() {
@@ -1195,13 +1252,18 @@
     for (const file of files) {
       try {
         const base64 = await readFileAsBase64(file);
-        const isVideo = file.type.startsWith('video/');
-        const path = isVideo ? '/api/requester/send-video' : '/api/requester/send-photo';
-        const bodyKey = isVideo ? 'video' : 'photo';
-        await api(path, {
-          method: 'POST',
-          body: JSON.stringify({ link_name: requesterPoint, [bodyKey]: base64 })
-        });
+        let path, body;
+        if (file.type.startsWith('image/')) {
+          path = '/api/requester/send-photo';
+          body = { link_name: requesterPoint, photo: base64 };
+        } else if (file.type.startsWith('video/')) {
+          path = '/api/requester/send-video';
+          body = { link_name: requesterPoint, video: base64 };
+        } else {
+          path = '/api/requester/send-file';
+          body = { link_name: requesterPoint, file: base64, filename: file.name };
+        }
+        await api(path, { method: 'POST', body: JSON.stringify(body) });
       } catch (e) {}
     }
     inputEl.value = '';
