@@ -739,6 +739,20 @@
     </div>
   </div>
 
+  <!-- SCREEN: REQUESTER CHAT (открывается напрямую по персональной ссылке, без доступа к остальному) -->
+  <div class="screen" id="screen-req">
+    <div class="topbar">
+      <h2 id="reqWithName">Поддержка</h2>
+    </div>
+    <div class="chat-wrap">
+      <div class="chat-messages" id="reqMessages"></div>
+      <div class="chat-input-bar">
+        <input class="field" id="reqInput" placeholder="Напиши сообщение...">
+        <button class="send-btn" onclick="sendRequesterMessage()">➤</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1077,7 +1091,55 @@
     } catch (e) {}
   }
 
-  loadState();
+  const urlParams = new URLSearchParams(window.location.search);
+  const requesterPoint = urlParams.get('point');
+
+  function renderRequesterMessages(messages) {
+    const wrap = document.getElementById('reqMessages');
+    wrap.innerHTML = messages.map(m =>
+      `<div class="msg ${m.sender === 'requester' ? 'out' : 'in'}">${m.text}</div>`
+    ).join('');
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  async function loadRequesterThread() {
+    try {
+      const data = await api('/api/requester/thread?point=' + encodeURIComponent(requesterPoint));
+      renderRequesterMessages(data.messages || []);
+    } catch (e) {}
+  }
+
+  async function sendRequesterMessage() {
+    const input = document.getElementById('reqInput');
+    const v = input.value.trim();
+    if (!v) return;
+    try {
+      await api('/api/requester/send', {
+        method: 'POST',
+        body: JSON.stringify({ link_name: requesterPoint, text: v })
+      });
+      input.value = '';
+      await loadRequesterThread();
+    } catch (e) {}
+  }
+
+  async function initRequesterMode() {
+    go('screen-req');
+    try {
+      const res = await fetch(getApiUrl() + '/api/point/' + encodeURIComponent(requesterPoint));
+      const info = await res.json();
+      document.getElementById('reqWithName').textContent =
+        info.ok && info.owner_username ? '@' + info.owner_username : 'Поддержка';
+    } catch (e) {}
+    await loadRequesterThread();
+  }
+
+  if (requesterPoint) {
+    initRequesterMode();
+  } else {
+    loadState();
+  }
+
 </script>
 
 </body>
