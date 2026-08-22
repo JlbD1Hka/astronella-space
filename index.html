@@ -518,6 +518,7 @@
   }
   .photo-btn:active { transform: scale(0.94); }
   .msg img { max-width: 100%; border-radius: 10px; display: block; }
+  .msg video { max-width: 100%; border-radius: 10px; display: block; }
 
   .footer {
     position: fixed;
@@ -748,7 +749,7 @@
       <div class="chat-input-bar">
         <input class="field" id="chatInput" placeholder="Ответить...">
         <button class="photo-btn" onclick="document.getElementById('chatPhotoInput').click()">📷</button>
-        <input type="file" id="chatPhotoInput" accept="image/*" style="display:none" onchange="sendReplyPhoto(this)">
+        <input type="file" id="chatPhotoInput" accept="image/*,video/*" multiple style="display:none" onchange="sendReplyMedia(this)">
         <button class="send-btn" onclick="sendReply()">➤</button>
       </div>
     </div>
@@ -764,7 +765,7 @@
       <div class="chat-input-bar">
         <input class="field" id="reqInput" placeholder="Напиши сообщение...">
         <button class="photo-btn" onclick="document.getElementById('reqPhotoInput').click()">📷</button>
-        <input type="file" id="reqPhotoInput" accept="image/*" style="display:none" onchange="sendRequesterPhoto(this)">
+        <input type="file" id="reqPhotoInput" accept="image/*,video/*" multiple style="display:none" onchange="sendRequesterMedia(this)">
         <button class="send-btn" onclick="sendRequesterMessage()">➤</button>
       </div>
     </div>
@@ -1090,9 +1091,16 @@
 
   function renderChat(messages) {
     const wrap = document.getElementById('chatMessages');
-    wrap.innerHTML = messages.map(m =>
-      `<div class="msg ${m.sender === 'requester' ? 'in' : 'out'}">${m.text}</div>`
-    ).join('');
+    wrap.innerHTML = messages.map(m => {
+      const side = m.sender === 'requester' ? 'in' : 'out';
+      if (m.text.startsWith('PHOTO:')) {
+        return `<div class="msg ${side}"><img src="${m.text.slice(6)}" loading="lazy"></div>`;
+      }
+      if (m.text.startsWith('VIDEO:')) {
+        return `<div class="msg ${side}"><video src="${m.text.slice(6)}" controls preload="metadata"></video></div>`;
+      }
+      return `<div class="msg ${side}">${m.text}</div>`;
+    }).join('');
     wrap.scrollTop = wrap.scrollHeight;
   }
 
@@ -1117,19 +1125,23 @@
     });
   }
 
-  async function sendReplyPhoto(inputEl) {
-    const file = inputEl.files && inputEl.files[0];
-    if (!file || currentTicketId == null) return;
-    try {
-      const base64 = await readFileAsBase64(file);
-      await api(`/api/tickets/${currentTicketId}/reply-photo`, {
-        method: 'POST',
-        body: JSON.stringify({ photo: base64 })
-      });
-      inputEl.value = '';
-      const data = await api(`/api/tickets/${currentTicketId}`);
-      renderChat(data.messages);
-    } catch (e) {}
+  async function sendReplyMedia(inputEl) {
+    const files = inputEl.files ? Array.from(inputEl.files) : [];
+    if (!files.length || currentTicketId == null) return;
+    for (const file of files) {
+      try {
+        const base64 = await readFileAsBase64(file);
+        const isVideo = file.type.startsWith('video/');
+        const path = isVideo
+          ? `/api/tickets/${currentTicketId}/reply-video`
+          : `/api/tickets/${currentTicketId}/reply-photo`;
+        const bodyKey = isVideo ? 'video' : 'photo';
+        await api(path, { method: 'POST', body: JSON.stringify({ [bodyKey]: base64 }) });
+      } catch (e) {}
+    }
+    inputEl.value = '';
+    const data = await api(`/api/tickets/${currentTicketId}`);
+    renderChat(data.messages);
   }
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -1143,9 +1155,16 @@
 
   function renderRequesterMessages(messages) {
     const wrap = document.getElementById('reqMessages');
-    wrap.innerHTML = messages.map(m =>
-      `<div class="msg ${m.sender === 'requester' ? 'out' : 'in'}">${m.text}</div>`
-    ).join('');
+    wrap.innerHTML = messages.map(m => {
+      const side = m.sender === 'requester' ? 'out' : 'in';
+      if (m.text.startsWith('PHOTO:')) {
+        return `<div class="msg ${side}"><img src="${m.text.slice(6)}" loading="lazy"></div>`;
+      }
+      if (m.text.startsWith('VIDEO:')) {
+        return `<div class="msg ${side}"><video src="${m.text.slice(6)}" controls preload="metadata"></video></div>`;
+      }
+      return `<div class="msg ${side}">${m.text}</div>`;
+    }).join('');
     wrap.scrollTop = wrap.scrollHeight;
   }
 
@@ -1170,18 +1189,23 @@
     } catch (e) {}
   }
 
-  async function sendRequesterPhoto(inputEl) {
-    const file = inputEl.files && inputEl.files[0];
-    if (!file) return;
-    try {
-      const base64 = await readFileAsBase64(file);
-      await api('/api/requester/send-photo', {
-        method: 'POST',
-        body: JSON.stringify({ link_name: requesterPoint, photo: base64 })
-      });
-      inputEl.value = '';
-      await loadRequesterThread();
-    } catch (e) {}
+  async function sendRequesterMedia(inputEl) {
+    const files = inputEl.files ? Array.from(inputEl.files) : [];
+    if (!files.length) return;
+    for (const file of files) {
+      try {
+        const base64 = await readFileAsBase64(file);
+        const isVideo = file.type.startsWith('video/');
+        const path = isVideo ? '/api/requester/send-video' : '/api/requester/send-photo';
+        const bodyKey = isVideo ? 'video' : 'photo';
+        await api(path, {
+          method: 'POST',
+          body: JSON.stringify({ link_name: requesterPoint, [bodyKey]: base64 })
+        });
+      } catch (e) {}
+    }
+    inputEl.value = '';
+    await loadRequesterThread();
   }
 
   async function initRequesterMode() {
